@@ -9,6 +9,34 @@
 #endif
 // TODO: equivalent constraint for ARM and other architectures
 
+static inline v128 bswap_128(v128 input) {
+  uint8_t bytes[16];
+  v128 result;
+
+  // 1. Transfer bits from vector to a byte array
+  // This is safe type punning.
+  memcpy(bytes, &input, sizeof(bytes));
+
+  // 2. Perform the swap on the byte array
+  // We swap the first 8 bytes with the last 8 bytes mirrored
+  for(int i = 0; i < 8; i++) {
+    uint8_t temp = bytes[i];
+    bytes[i] = bytes[15 - i];
+    bytes[15 - i] = temp;
+  }
+
+  // 3. Transfer bits back to the vector type
+  memcpy(&result, bytes, sizeof(result));
+
+  return result;
+}
+
+#if WABT_BIG_ENDIAN
+#define WABT_BSWAP_128(v) bswap_128(v)
+#else
+#define WABT_BSWAP_128(v) (v)
+#endif
+
 #define DEFINE_SIMD_LOAD_FUNC(name, func, t)                             \
   static inline v128 name##_unchecked(wasm_rt_memory_t* mem, u64 addr) { \
     v128 result = func(MEM_ADDR(mem, addr, sizeof(t)));                  \
@@ -29,6 +57,7 @@
 #define DEFINE_SIMD_STORE(name, t)                                     \
   static inline void name##_unchecked(wasm_rt_memory_t* mem, u64 addr, \
                                       v128 value) {                    \
+    value = WABT_BSWAP_128(value);                                     \
     simde_wasm_v128_store(MEM_ADDR(mem, addr, sizeof(t)), value);      \
   }                                                                    \
   DEF_MEM_CHECKS1(name, _, t, , void, v128);
@@ -40,39 +69,129 @@
   }                                                                    \
   DEF_MEM_CHECKS1(name, _, t, , void, v128);
 
-// clang-format off
 #if WABT_BIG_ENDIAN
-static inline v128 v128_impl_load32_zero(const void* a) {
-  return simde_wasm_i8x16_swizzle(
-      simde_wasm_v128_load32_zero(a),
-      simde_wasm_i8x16_const(12,13,14,15,8,9,10,11,4,5,6,7,0,1,2,3));
-}
-static inline v128 v128_impl_load64_zero(const void* a) {
-  return simde_wasm_i8x16_swizzle(
-      simde_wasm_v128_load64_zero(a),
-      simde_wasm_i8x16_const(8,9,10,11,12,13,14,15,0,1,2,3,4,5,6,7));
-}
-#else
-#define v128_impl_load32_zero simde_wasm_v128_load32_zero
-#define v128_impl_load64_zero simde_wasm_v128_load64_zero
+  #define DEFINE_SIMD_LOAD_FUNC_BSWAP(name, func, t, bswap)        \
+    static inline v128 name##_unchecked(wasm_rt_memory_t* mem, u64 addr) { \
+      v128 result = func(MEM_ADDR(mem, addr, sizeof(t)));                  \
+      result = bswap(result);                                             \
+      SIMD_FORCE_READ(result);                                             \
+      return result;                                                       \
+    }                                                                      \
+    DEF_MEM_CHECKS0(name, _, t, return, v128);
 #endif
 
-DEFINE_SIMD_LOAD_FUNC(v128_load, simde_wasm_v128_load, v128)
+#if WABT_BIG_ENDIAN
+  #define DEFINE_SIMD_LOAD_LANE_BSWAP(name, func, extract, replace, bswap, t, lane) \
+    static inline v128 name##_unchecked(wasm_rt_memory_t* mem, u64 addr,      \
+                                        v128 vec) {                           \
+      v128 result = func(MEM_ADDR(mem, addr, sizeof(t)), vec, lane);          \
+                                                                              \
+      t val = extract(result, lane);                                          \
+      val = bswap(val);                                                       \
+      result = replace(result, lane, val);                                    \
+                                                                              \
+      SIMD_FORCE_READ(result);                                                \
+      return result;                                                          \
+    }                                                                         \
+    DEF_MEM_CHECKS1(name, _, t, return, v128, v128);
+#endif
 
+#if WABT_BIG_ENDIAN
+  #define DEFINE_SIMD_STORE_LANE_BSWAP(name, func, extract, replace, bswap, t, lane) \
+    static inline void name##_unchecked(wasm_rt_memory_t* mem, u64 addr,             \
+                                        v128 value) {                                \
+      t val = extract(value, lane);                                                  \
+      val = bswap(val);                                                              \
+      v128 swapped_vec = replace(value, lane, val);                                  \
+                                                                                     \
+      func(MEM_ADDR(mem, addr, sizeof(t)), swapped_vec, lane);                       \
+    }                                                                                \
+    DEF_MEM_CHECKS1(name, _, t, , void, v128);
+#endif
+
+// clang-format off
+#define v128_impl_load32_zero simde_wasm_v128_load32_zero
+#define v128_impl_load64_zero simde_wasm_v128_load64_zero
+
+// static inline v128 ext_i16x8_load8x8(const void* p) { uint64_t s = bswap_64(p); return simde_wasm_i16x8_load8x8(&s); }
+// static inline v128 ext_u16x8_load8x8(const void* p) { uint64_t s = bswap_64(p); return simde_wasm_u16x8_load8x8(&s); }
+// static inline v128 ext_i32x4_load16x4(const void* p) { uint64_t s = bswap_64(p); return simde_wasm_i32x4_load16x4(&s); }
+// static inline v128 ext_u32x4_load16x4(const void* p) { uint64_t s = bswap_64(p); return simde_wasm_u32x4_load16x4(&s); }
+// static inline v128 ext_i64x2_load32x2(const void* p) { uint64_t s = bswap_64(p); return simde_wasm_i64x2_load32x2(&s); }
+// static inline v128 ext_u64x2_load32x2(const void* p) { uint64_t s = bswap_64(p); return simde_wasm_u64x2_load32x2(&s); }
+
+static inline v128 ext_i32x4_load16x4(const void* p) {
+  uint64_t s;
+  memcpy(&s, p, sizeof(s)); // Load 8 bytes (4x16)
+  s = __builtin_bswap64(s); // Swap all 64 bits
+  return simde_wasm_i32x4_load16x4(&s);
+}
+
+static inline v128 ext_u32x4_load16x4(const void* p) {
+  uint64_t s;
+  memcpy(&s, p, sizeof(s)); 
+  s = __builtin_bswap64(s); 
+  return simde_wasm_u32x4_load16x4(&s);
+}
+
+static inline v128 ext_i64x2_load32x2(const void* p) {
+  uint64_t s;
+  memcpy(&s, p, sizeof(s)); // Load 8 bytes (2x32)
+  s = __builtin_bswap64(s); 
+  return simde_wasm_i64x2_load32x2(&s);     // Fixed typo here
+}
+
+static inline v128 ext_u64x2_load32x2(const void* p) {
+  uint64_t s;
+  memcpy(&s, p, sizeof(s)); 
+  s = __builtin_bswap64(s); 
+  return simde_wasm_u64x2_load32x2(&s);
+}
+
+// And don't forget the 8x8 ones! They also load 64 bits.
+static inline v128 ext_i16x8_load8x8(const void* p) {
+  uint64_t s;
+  memcpy(&s, p, sizeof(s)); 
+  s = __builtin_bswap64(s); 
+  return simde_wasm_i16x8_load8x8(&s);
+}
+
+static inline v128 ext_u16x8_load8x8(const void* p) {
+  uint64_t s;
+  memcpy(&s, p, sizeof(s)); 
+  s = __builtin_bswap64(s); 
+  return simde_wasm_u16x8_load8x8(&s);
+}
+
+#if WABT_BIG_ENDIAN
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load, simde_wasm_v128_load, v128, bswap_128)
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load8_splat, simde_wasm_v128_load8_splat, u8, bswap_128)
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load16_splat, simde_wasm_v128_load16_splat, u16, bswap_128)
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load32_splat, simde_wasm_v128_load32_splat, u32, bswap_128)
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load64_splat, simde_wasm_v128_load64_splat, u64, bswap_128)
+DEFINE_SIMD_LOAD_FUNC(i16x8_load8x8, ext_i16x8_load8x8, u64)
+DEFINE_SIMD_LOAD_FUNC(u16x8_load8x8, ext_u16x8_load8x8, u64)
+DEFINE_SIMD_LOAD_FUNC(i32x4_load16x4, ext_i32x4_load16x4, u64)
+DEFINE_SIMD_LOAD_FUNC(u32x4_load16x4, ext_u32x4_load16x4, u64)
+DEFINE_SIMD_LOAD_FUNC(i64x2_load32x2, ext_i64x2_load32x2, u64)
+DEFINE_SIMD_LOAD_FUNC(u64x2_load32x2, ext_u64x2_load32x2, u64)
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load32_zero, v128_impl_load32_zero, u32, bswap_128)
+DEFINE_SIMD_LOAD_FUNC_BSWAP(v128_load64_zero, v128_impl_load64_zero, u64, bswap_128)
+#else
+DEFINE_SIMD_LOAD_FUNC(v128_load, simde_wasm_v128_load, v128)
 DEFINE_SIMD_LOAD_FUNC(v128_load8_splat, simde_wasm_v128_load8_splat, u8)
 DEFINE_SIMD_LOAD_FUNC(v128_load16_splat, simde_wasm_v128_load16_splat, u16)
 DEFINE_SIMD_LOAD_FUNC(v128_load32_splat, simde_wasm_v128_load32_splat, u32)
 DEFINE_SIMD_LOAD_FUNC(v128_load64_splat, simde_wasm_v128_load64_splat, u64)
-
 DEFINE_SIMD_LOAD_FUNC(i16x8_load8x8, simde_wasm_i16x8_load8x8, u64)
 DEFINE_SIMD_LOAD_FUNC(u16x8_load8x8, simde_wasm_u16x8_load8x8, u64)
 DEFINE_SIMD_LOAD_FUNC(i32x4_load16x4, simde_wasm_i32x4_load16x4, u64)
 DEFINE_SIMD_LOAD_FUNC(u32x4_load16x4, simde_wasm_u32x4_load16x4, u64)
 DEFINE_SIMD_LOAD_FUNC(i64x2_load32x2, simde_wasm_i64x2_load32x2, u64)
 DEFINE_SIMD_LOAD_FUNC(u64x2_load32x2, simde_wasm_u64x2_load32x2, u64)
-
 DEFINE_SIMD_LOAD_FUNC(v128_load32_zero, v128_impl_load32_zero, u32)
 DEFINE_SIMD_LOAD_FUNC(v128_load64_zero, v128_impl_load64_zero, u64)
+#endif
 
 #if WABT_BIG_ENDIAN
 DEFINE_SIMD_LOAD_LANE(v128_load8_lane0, simde_wasm_v128_load8_lane, u8, 15)
@@ -91,20 +210,20 @@ DEFINE_SIMD_LOAD_LANE(v128_load8_lane12, simde_wasm_v128_load8_lane, u8, 3)
 DEFINE_SIMD_LOAD_LANE(v128_load8_lane13, simde_wasm_v128_load8_lane, u8, 2)
 DEFINE_SIMD_LOAD_LANE(v128_load8_lane14, simde_wasm_v128_load8_lane, u8, 1)
 DEFINE_SIMD_LOAD_LANE(v128_load8_lane15, simde_wasm_v128_load8_lane, u8, 0)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane0, simde_wasm_v128_load16_lane, u16, 7)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane1, simde_wasm_v128_load16_lane, u16, 6)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane2, simde_wasm_v128_load16_lane, u16, 5)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane3, simde_wasm_v128_load16_lane, u16, 4)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane4, simde_wasm_v128_load16_lane, u16, 3)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane5, simde_wasm_v128_load16_lane, u16, 2)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane6, simde_wasm_v128_load16_lane, u16, 1)
-DEFINE_SIMD_LOAD_LANE(v128_load16_lane7, simde_wasm_v128_load16_lane, u16, 0)
-DEFINE_SIMD_LOAD_LANE(v128_load32_lane0, simde_wasm_v128_load32_lane, u32, 3)
-DEFINE_SIMD_LOAD_LANE(v128_load32_lane1, simde_wasm_v128_load32_lane, u32, 2)
-DEFINE_SIMD_LOAD_LANE(v128_load32_lane2, simde_wasm_v128_load32_lane, u32, 1)
-DEFINE_SIMD_LOAD_LANE(v128_load32_lane3, simde_wasm_v128_load32_lane, u32, 0)
-DEFINE_SIMD_LOAD_LANE(v128_load64_lane0, simde_wasm_v128_load64_lane, u64, 1)
-DEFINE_SIMD_LOAD_LANE(v128_load64_lane1, simde_wasm_v128_load64_lane, u64, 0)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane0, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 7)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane1, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 6)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane2, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 5)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane3, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 4)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane4, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 3)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane5, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 2)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane6, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 1)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load16_lane7, simde_wasm_v128_load16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 0)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load32_lane0, simde_wasm_v128_load32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 3)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load32_lane1, simde_wasm_v128_load32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 2)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load32_lane2, simde_wasm_v128_load32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 1)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load32_lane3, simde_wasm_v128_load32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 0)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load64_lane0, simde_wasm_v128_load64_lane, simde_wasm_i64x2_extract_lane, simde_wasm_i64x2_replace_lane, bswap_64, u64, 1)
+DEFINE_SIMD_LOAD_LANE_BSWAP(v128_load64_lane1, simde_wasm_v128_load64_lane, simde_wasm_i64x2_extract_lane, simde_wasm_i64x2_replace_lane, bswap_64, u64, 0)
 #else
 DEFINE_SIMD_LOAD_LANE(v128_load8_lane0, simde_wasm_v128_load8_lane, u8, 0)
 DEFINE_SIMD_LOAD_LANE(v128_load8_lane1, simde_wasm_v128_load8_lane, u8, 1)
@@ -157,20 +276,20 @@ DEFINE_SIMD_STORE_LANE(v128_store8_lane12, simde_wasm_v128_store8_lane, u8, 3)
 DEFINE_SIMD_STORE_LANE(v128_store8_lane13, simde_wasm_v128_store8_lane, u8, 2)
 DEFINE_SIMD_STORE_LANE(v128_store8_lane14, simde_wasm_v128_store8_lane, u8, 1)
 DEFINE_SIMD_STORE_LANE(v128_store8_lane15, simde_wasm_v128_store8_lane, u8, 0)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane0, simde_wasm_v128_store16_lane, u16, 7)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane1, simde_wasm_v128_store16_lane, u16, 6)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane2, simde_wasm_v128_store16_lane, u16, 5)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane3, simde_wasm_v128_store16_lane, u16, 4)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane4, simde_wasm_v128_store16_lane, u16, 3)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane5, simde_wasm_v128_store16_lane, u16, 2)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane6, simde_wasm_v128_store16_lane, u16, 1)
-DEFINE_SIMD_STORE_LANE(v128_store16_lane7, simde_wasm_v128_store16_lane, u16, 0)
-DEFINE_SIMD_STORE_LANE(v128_store32_lane0, simde_wasm_v128_store32_lane, u32, 3)
-DEFINE_SIMD_STORE_LANE(v128_store32_lane1, simde_wasm_v128_store32_lane, u32, 2)
-DEFINE_SIMD_STORE_LANE(v128_store32_lane2, simde_wasm_v128_store32_lane, u32, 1)
-DEFINE_SIMD_STORE_LANE(v128_store32_lane3, simde_wasm_v128_store32_lane, u32, 0)
-DEFINE_SIMD_STORE_LANE(v128_store64_lane0, simde_wasm_v128_store64_lane, u64, 1)
-DEFINE_SIMD_STORE_LANE(v128_store64_lane1, simde_wasm_v128_store64_lane, u64, 0)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane0, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 7)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane1, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 6)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane2, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 5)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane3, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 4)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane4, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 3)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane5, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 2)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane6, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 1)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store16_lane7, simde_wasm_v128_store16_lane, simde_wasm_i16x8_extract_lane, simde_wasm_i16x8_replace_lane, bswap_16, u16, 0)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store32_lane0, simde_wasm_v128_store32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 3)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store32_lane1, simde_wasm_v128_store32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 2)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store32_lane2, simde_wasm_v128_store32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 1)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store32_lane3, simde_wasm_v128_store32_lane, simde_wasm_i32x4_extract_lane, simde_wasm_i32x4_replace_lane, bswap_32, u32, 0)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store64_lane0, simde_wasm_v128_store64_lane, simde_wasm_i64x2_extract_lane, simde_wasm_i64x2_replace_lane, bswap_64, u64, 1)
+DEFINE_SIMD_STORE_LANE_BSWAP(v128_store64_lane1, simde_wasm_v128_store64_lane, simde_wasm_i64x2_extract_lane, simde_wasm_i64x2_replace_lane, bswap_64, u64, 0)
 #else
 DEFINE_SIMD_STORE_LANE(v128_store8_lane0, simde_wasm_v128_store8_lane, u8, 0)
 DEFINE_SIMD_STORE_LANE(v128_store8_lane1, simde_wasm_v128_store8_lane, u8, 1)
