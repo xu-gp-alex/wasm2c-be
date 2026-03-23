@@ -73,7 +73,7 @@ option(WERROR "Build with warnings as errors" OFF)
 option(WABT_INSTALL_RULES "Include WABT's install() rules" "${PROJECT_IS_TOP_LEVEL}")
 # WASI support is still a work in progress.
 # Only a handful of syscalls are supported at this point.
-option(WITH_WASI "Build WASI support via uvwasi" OFF)
+option(WITH_WASI "Build WASI support via uvwasi" ON)
 option(USE_INTERNAL_SHA256 "Use internal PicoSHA2 for SHA-256 support instead of OpenSSL libcrypto" OFF)
 
 if (MSVC)

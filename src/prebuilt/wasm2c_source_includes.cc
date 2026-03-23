@@ -8,6 +8,8 @@ R"w2c_template(#include <stddef.h>
 )w2c_template"
 R"w2c_template(#include <string.h>
 )w2c_template"
+R"w2c_template(#include <byteswap.h>
+)w2c_template"
 R"w2c_template(#if defined(__MINGW32__)
 )w2c_template"
 R"w2c_template(#include <malloc.h>

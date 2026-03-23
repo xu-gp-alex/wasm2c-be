@@ -14,10 +14,48 @@
 //
 // Result:
 // A pointer for an object of size n.
-#if WABT_BIG_ENDIAN
-#define MEM_ADDR(mem, addr, n) ((mem)->data_end - (addr) - (n))
-#else
 #define MEM_ADDR(mem, addr, n) &((mem)->data[addr])
+
+static inline f32 wasm_bswap_f32(f32 x) {
+  u32 as_int;
+  memcpy(&as_int, &x, sizeof(f32));
+  as_int = bswap_32(as_int);
+  f32 result;
+  memcpy(&result, &as_int, sizeof(f32));
+  return result;
+}
+
+static inline f64 wasm_bswap_f64(f64 x) {
+  u64 as_int;
+  memcpy(&as_int, &x, sizeof(f64));
+  as_int = bswap_64(as_int);
+  f64 result;
+  memcpy(&result, &as_int, sizeof(f64));
+  return result;
+}
+
+#if defined(WABT_BIG_ENDIAN)
+  #define WABT_BSWAP_u8(v)   (v)
+  #define WABT_BSWAP_s8(v)   (v)
+  #define WABT_BSWAP_u16(v)  bswap_16(v)
+  #define WABT_BSWAP_s16(v)  (s16) bswap_16((u16) v)
+  #define WABT_BSWAP_u32(v)  bswap_32(v)
+  #define WABT_BSWAP_s32(v)  (s32) bswap_32((u32) v)
+  #define WABT_BSWAP_u64(v)  bswap_64(v)
+  #define WABT_BSWAP_s64(v)  (s64) bswap_64((u64) v)
+  #define WABT_BSWAP_f32(v)  wasm_bswap_f32(v)
+  #define WABT_BSWAP_f64(v)  wasm_bswap_f64(v)
+#else
+  #define WABT_BSWAP_u8(v)   (v)
+  #define WABT_BSWAP_s8(v)   (v)
+  #define WABT_BSWAP_u16(v)  (v)
+  #define WABT_BSWAP_s16(v)  (v)
+  #define WABT_BSWAP_u32(v)  (v)
+  #define WABT_BSWAP_s32(v)  (v)
+  #define WABT_BSWAP_u64(v)  (v)
+  #define WABT_BSWAP_s64(v)  (v)
+  #define WABT_BSWAP_f32(v)  (v)
+  #define WABT_BSWAP_f64(v)  (v)
 #endif
 
 // We can only use Segue for this module if it uses a single unshared imported
@@ -156,13 +194,8 @@ static inline void load_data(u8* dest, const u8* src, size_t n) {
   if (!n) {
     return;
   }
-#if WABT_BIG_ENDIAN
-  for (size_t i = 0; i < n; i++) {
-    dest[i] = src[n - i - 1];
-  }
-#else
+
   wasm_rt_memcpy(dest, src, n);
-#endif
 }
 
 #define LOAD_DATA(m, o, i, s)            \
@@ -215,6 +248,7 @@ static inline void load_data(u8* dest, const u8* src, size_t n) {
     wasm_rt_memcpy(&result, MEM_ADDR_MEMOP(mem, addr, sizeof(t1)),     \
                    sizeof(t1));                                        \
     force_read(result);                                                \
+    result = WABT_BSWAP_##t1(result);                                  \
     return (t3)(t2)result;                                             \
   }                                                                    \
   DEF_MEM_CHECKS0(name, _, t1, return, t3)
@@ -223,6 +257,7 @@ static inline void load_data(u8* dest, const u8* src, size_t n) {
   static inline void name##_unchecked(wasm_rt_memory_t* mem, u64 addr, \
                                       t2 value) {                      \
     t1 wrapped = (t1)value;                                            \
+    wrapped = WABT_BSWAP_##t1(wrapped);                                \
     wasm_rt_memcpy(MEM_ADDR_MEMOP(mem, addr, sizeof(t1)), &wrapped,    \
                    sizeof(t1));                                        \
   }                                                                    \
