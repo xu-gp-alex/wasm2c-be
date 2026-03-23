@@ -29,13 +29,110 @@ R"w2c_template(// Result:
 )w2c_template"
 R"w2c_template(// A pointer for an object of size n.
 )w2c_template"
-R"w2c_template(#if WABT_BIG_ENDIAN
+R"w2c_template(#define MEM_ADDR(mem, addr, n) &((mem)->data[addr])
 )w2c_template"
-R"w2c_template(#define MEM_ADDR(mem, addr, n) ((mem)->data_end - (addr) - (n))
+R"w2c_template(
+#if !WABT_BIG_ENDIAN
+)w2c_template"
+R"w2c_template(#error Not big endian!
+)w2c_template"
+R"w2c_template(#endif
+)w2c_template"
+R"w2c_template(
+#include <string.h> // for memcpy
+)w2c_template"
+R"w2c_template(#include <byteswap.h>
+)w2c_template"
+R"w2c_template(
+static inline f32 wasm_bswap_f32(f32 x) {
+)w2c_template"
+R"w2c_template(  u32 as_int;
+)w2c_template"
+R"w2c_template(  // 1. Interpret bits as integer
+)w2c_template"
+R"w2c_template(  memcpy(&as_int, &x, sizeof(f32));
+)w2c_template"
+R"w2c_template(  
+)w2c_template"
+R"w2c_template(  // 2. Perform the swap
+)w2c_template"
+R"w2c_template(  as_int = bswap_32(as_int);
+)w2c_template"
+R"w2c_template(  
+)w2c_template"
+R"w2c_template(  // 3. Interpret bits back as float
+)w2c_template"
+R"w2c_template(  f32 result;
+)w2c_template"
+R"w2c_template(  memcpy(&result, &as_int, sizeof(f32));
+)w2c_template"
+R"w2c_template(  return result;
+)w2c_template"
+R"w2c_template(}
+)w2c_template"
+R"w2c_template(
+static inline f64 wasm_bswap_f64(f64 x) {
+)w2c_template"
+R"w2c_template(  u64 as_int;
+)w2c_template"
+R"w2c_template(  memcpy(&as_int, &x, sizeof(f64));
+)w2c_template"
+R"w2c_template(  as_int = bswap_64(as_int);
+)w2c_template"
+R"w2c_template(  f64 result;
+)w2c_template"
+R"w2c_template(  memcpy(&result, &as_int, sizeof(f64));
+)w2c_template"
+R"w2c_template(  return result;
+)w2c_template"
+R"w2c_template(}
+)w2c_template"
+R"w2c_template(
+#if defined(WABT_BIG_ENDIAN)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u8(v)   (v)             // Single byte: never swap
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s8(v)   (v)             // Single byte: never swap
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u16(v)  bswap_16(v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s16(v)  (s16) bswap_16((u16) v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u32(v)  bswap_32(v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s32(v)  (s32) bswap_32((u32) v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u64(v)  bswap_64(v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s64(v)  (s64) bswap_64((u64) v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_f32(v)  wasm_bswap_f32(v) // helper needed for float bitcast
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_f64(v)  wasm_bswap_f64(v)
 )w2c_template"
 R"w2c_template(#else
 )w2c_template"
-R"w2c_template(#define MEM_ADDR(mem, addr, n) &((mem)->data[addr])
+R"w2c_template(  // Little Endian (Standard Wasm) -> Do nothing (Identity)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u8(v)   (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s8(v)   (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u16(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s16(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u32(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s32(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_u64(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_s64(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_f32(v)  (v)
+)w2c_template"
+R"w2c_template(  #define WABT_BSWAP_f64(v)  (v)
 )w2c_template"
 R"w2c_template(#endif
 )w2c_template"
@@ -293,19 +390,8 @@ R"w2c_template(    return;
 )w2c_template"
 R"w2c_template(  }
 )w2c_template"
-R"w2c_template(#if WABT_BIG_ENDIAN
-)w2c_template"
-R"w2c_template(  for (size_t i = 0; i < n; i++) {
-)w2c_template"
-R"w2c_template(    dest[i] = src[n - i - 1];
-)w2c_template"
-R"w2c_template(  }
-)w2c_template"
-R"w2c_template(#else
-)w2c_template"
-R"w2c_template(  wasm_rt_memcpy(dest, src, n);
-)w2c_template"
-R"w2c_template(#endif
+R"w2c_template(
+  wasm_rt_memcpy(dest, src, n);
 )w2c_template"
 R"w2c_template(}
 )w2c_template"
@@ -406,6 +492,8 @@ R"w2c_template(                   sizeof(t1));                                  
 )w2c_template"
 R"w2c_template(    force_read(result);                                                \
 )w2c_template"
+R"w2c_template(    result = WABT_BSWAP_##t1(result);                                  \
+)w2c_template"
 R"w2c_template(    return (t3)(t2)result;                                             \
 )w2c_template"
 R"w2c_template(  }                                                                    \
@@ -420,6 +508,8 @@ R"w2c_template(  static inline void name##_unchecked(wasm_rt_memory_t* mem, u64 
 R"w2c_template(                                      t2 value) {                      \
 )w2c_template"
 R"w2c_template(    t1 wrapped = (t1)value;                                            \
+)w2c_template"
+R"w2c_template(    wrapped = WABT_BSWAP_##t1(wrapped);                                \
 )w2c_template"
 R"w2c_template(    wasm_rt_memcpy(MEM_ADDR_MEMOP(mem, addr, sizeof(t1)), &wrapped,    \
 )w2c_template"
